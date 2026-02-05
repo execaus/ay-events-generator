@@ -2,6 +2,7 @@ package generator
 
 import (
 	"testing"
+	"time"
 )
 
 func TestViewDurationMaxBound(t *testing.T) {
@@ -35,4 +36,53 @@ func TestRandomizationActuallyChangesValues(t *testing.T) {
 	if e1.IPAddress == e2.IPAddress {
 		t.Fatal("IPAddress did not change between events")
 	}
+}
+
+func TestRegularModeEventCount(t *testing.T) {
+	t.Parallel()
+
+	count := getEventCount(RegularMode, 30*time.Second)
+
+	if count < 30 || count > 300 {
+		t.Fatalf("RegularMode: expected 30–300 events, got %d", count)
+	}
+}
+
+func TestPickLoadModeEventCount(t *testing.T) {
+	t.Parallel()
+
+	count := getEventCount(PickLoadMode, 30*time.Second)
+
+	if count < 1500 || count > 15000 {
+		t.Fatalf("PickLoadMode: expected 1,500–15,000 events, got %d", count)
+	}
+}
+
+func TestNightModeEventCount(t *testing.T) {
+	t.Parallel()
+
+	count := getEventCount(NightMode, 30*time.Second)
+
+	if count < 1 || count > 6 {
+		t.Fatalf("NightMode: expected 1-6 events, got %d", count)
+	}
+}
+
+func getEventCount(mode string, duration time.Duration) int {
+	g := NewEventGenerator()
+	g.SetMode(mode)
+
+	result := make(chan int)
+	go func() {
+		count := 0
+		for range g.Listen() {
+			count++
+		}
+		result <- count
+	}()
+
+	time.Sleep(duration)
+	g.Close()
+
+	return <-result
 }
