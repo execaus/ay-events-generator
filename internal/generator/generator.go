@@ -13,10 +13,13 @@ import (
 )
 
 // Максимальная длительность просмотра по умолчанию (мс)
-const defaultDurationMax = 30_000
+const defaultDurationMax = 600
 
 // Процент "отскоков" по умолчанию
-const defaultBounceRate = 0.3
+const defaultBounceRate = 0.1
+
+// Процент событий с преднамеренными ошибками
+const defaultInvalidRate = 0.05
 
 // Режим генерации по умолчанию
 const defaultMode = RegularMode
@@ -39,6 +42,13 @@ const (
 	nightModeEventProb   = 0.01
 )
 
+// Типы дефектов события
+const (
+	emptyPageIDDefect = iota
+	negativeDurationDefect
+	invalidJSONDefect
+)
+
 // Частота тикера генерации
 const tickDuration = 100 * time.Millisecond
 
@@ -59,15 +69,18 @@ var (
 	}
 	// Доступные режимы генерации
 	mods = [...]string{RegularMode, PickLoadMode, NightMode}
+	// Дефекты событий
+	defects = [...]int{emptyPageIDDefect, negativeDurationDefect, invalidJSONDefect}
 )
 
 // EventGenerator структура генератора событий
 type EventGenerator struct {
-	DurationMax  int                      // Максимальная длительность события
-	BounceRate   float32                  // Вероятность отскока
-	Mode         string                   // Режим генерации
-	eventChannel chan event.PageViewEvent // Канал для отправки событий
-	stopChannel  chan struct{}            // Канал для остановки генерации
+	DurationMax  int           // Максимальная длительность события
+	BounceRate   float32       // Вероятность отскока
+	InvalidRate  float32       // Вероятность преднамеренной ошибки
+	Mode         string        // Режим генерации
+	eventChannel chan Event    // Канал для отправки событий
+	stopChannel  chan struct{} // Канал для остановки генерации
 }
 
 // NewEventGenerator создает новый экземпляр генератора событий с настройками по умолчанию
@@ -75,8 +88,9 @@ func NewEventGenerator() *EventGenerator {
 	return &EventGenerator{
 		DurationMax:  defaultDurationMax,
 		BounceRate:   defaultBounceRate,
+		InvalidRate:  defaultInvalidRate,
 		Mode:         defaultMode,
-		eventChannel: make(chan event.PageViewEvent),
+		eventChannel: make(chan Event),
 		stopChannel:  make(chan struct{}),
 	}
 }
@@ -101,6 +115,11 @@ func (g *EventGenerator) SetMode(mode string) {
 	g.Mode = mode
 }
 
+// SetInvalidRate задает вероятность преднамеренной ошибки в событии
+func (g *EventGenerator) SetInvalidRate(value float32) {
+	g.InvalidRate = value
+}
+
 // eventTick определяет количество событий, генерируемых за тик, в зависимости от режима
 func (g *EventGenerator) eventTick() int {
 	switch g.Mode {
@@ -123,8 +142,8 @@ func (g *EventGenerator) eventTick() int {
 }
 
 // Event генерирует одно событие PageViewEvent
-func (g *EventGenerator) Event() event.PageViewEvent {
-	var isBounce bool
+func (g *EventGenerator) Event() Event {
+	var isBounce, isInvalid bool
 
 	duration := mrand.Intn(g.DurationMax) + 1
 
@@ -134,20 +153,17 @@ func (g *EventGenerator) Event() event.PageViewEvent {
 		isBounce = mrand.Float32() < g.BounceRate
 	}
 
-	return event.PageViewEvent{
-		PageID:       uuid.NewString(),
-		UserID:       uuid.NewString(),
-		ViewDuration: duration,
-		Timestamp:    time.Now(),
-		UserAgent:    g.randomUserAgent(),
-		IPAddress:    g.randomIPv4(),
-		Region:       g.randomRegion(),
-		IsBounce:     isBounce,
+	isInvalid = mrand.Float32() < g.InvalidRate
+
+	if isInvalid {
+		return g.getInvalidEvent()
 	}
+
+	return g.getValidEvent(duration, isBounce)
 }
 
 // Listen возвращает канал событий и запускает генерацию в фоне
-func (g *EventGenerator) Listen() <-chan event.PageViewEvent {
+func (g *EventGenerator) Listen() <-chan Event {
 	go func() {
 		ticker := time.NewTicker(tickDuration)
 		defer ticker.Stop()
@@ -183,4 +199,75 @@ func (g *EventGenerator) randomIPv4() string {
 	ip := make(net.IP, 4)
 	_, _ = rand.Read(ip)
 	return ip.String()
+}
+
+// getInvalidEvent генерирует случайное "недействительное" событие с одним из предопределённых дефектов
+func (g *EventGenerator) getInvalidEvent() Event {
+	var e event.PageViewEvent
+
+	defectType := mrand.Intn(len(defects))
+
+	switch defectType {
+	case emptyPageIDDefect:
+		e = event.PageViewEvent{
+			PageID:       "",
+			UserID:       uuid.NewString(),
+			ViewDuration: mrand.Intn(g.DurationMax) + 1,
+			Timestamp:    time.Now(),
+			UserAgent:    g.randomUserAgent(),
+			IPAddress:    g.randomIPv4(),
+			Region:       g.randomRegion(),
+			IsBounce:     false,
+		}
+	case negativeDurationDefect:
+		e = event.PageViewEvent{
+			PageID:       uuid.NewString(),
+			UserID:       uuid.NewString(),
+			ViewDuration: -(mrand.Intn(g.DurationMax) + 1),
+			Timestamp:    time.Now(),
+			UserAgent:    g.randomUserAgent(),
+			IPAddress:    g.randomIPv4(),
+			Region:       g.randomRegion(),
+			IsBounce:     false,
+		}
+	case invalidJSONDefect:
+		e = event.PageViewEvent{
+			PageID:       uuid.NewString(),
+			UserID:       uuid.NewString(),
+			ViewDuration: mrand.Intn(g.DurationMax) + 1,
+			Timestamp:    time.Now(),
+			UserAgent:    string([]byte{0xff, 0xfe, 0xfd}), // некорректные байты
+			IPAddress:    g.randomIPv4(),
+			Region:       g.randomRegion(),
+			IsBounce:     false,
+		}
+	default:
+		zap.L().Error("invalid defect type")
+	}
+
+	return Event{
+		Event: e,
+		Meta: Meta{
+			IsInvalid: true,
+		},
+	}
+}
+
+// getValidEvent возращает корректное событие
+func (g *EventGenerator) getValidEvent(duration int, isBounce bool) Event {
+	return Event{
+		Event: event.PageViewEvent{
+			PageID:       uuid.NewString(),
+			UserID:       uuid.NewString(),
+			ViewDuration: duration,
+			Timestamp:    time.Now(),
+			UserAgent:    g.randomUserAgent(),
+			IPAddress:    g.randomIPv4(),
+			Region:       g.randomRegion(),
+			IsBounce:     isBounce,
+		},
+		Meta: Meta{
+			IsInvalid: false,
+		},
+	}
 }

@@ -13,8 +13,8 @@ func TestViewDurationMaxBound(t *testing.T) {
 
 	for range 1000 {
 		e := g.Event()
-		if e.ViewDuration <= 0 || e.ViewDuration > maxDuration {
-			t.Fatalf("ViewDuration out of bounds: %d", e.ViewDuration)
+		if !e.Meta.IsInvalid && e.Event.ViewDuration <= 0 || e.Event.ViewDuration > maxDuration {
+			t.Fatalf("ViewDuration out of bounds: %d", e.Event.ViewDuration)
 		}
 	}
 }
@@ -25,15 +25,15 @@ func TestRandomizationActuallyChangesValues(t *testing.T) {
 	e1 := g.Event()
 	e2 := g.Event()
 
-	if e1.PageID == e2.PageID {
+	if e1.Event.PageID == e2.Event.PageID {
 		t.Fatal("PageID did not change between events")
 	}
 
-	if e1.UserID == e2.UserID {
+	if e1.Event.UserID == e2.Event.UserID {
 		t.Fatal("UserID did not change between events")
 	}
 
-	if e1.IPAddress == e2.IPAddress {
+	if e1.Event.IPAddress == e2.Event.IPAddress {
 		t.Fatal("IPAddress did not change between events")
 	}
 }
@@ -85,4 +85,26 @@ func getEventCount(mode string, duration time.Duration) int {
 	g.Close()
 
 	return <-result
+}
+
+func TestInvalidEventRate(t *testing.T) {
+	const totalEvents = 10000
+	const expectedRate = 0.05
+	const tolerance = 0.01
+
+	g := NewEventGenerator()
+	g.SetInvalidRate(expectedRate)
+
+	invalidCount := 0
+	for range totalEvents {
+		e := g.Event()
+		if e.Meta.IsInvalid {
+			invalidCount++
+		}
+	}
+
+	actualRate := float64(invalidCount) / float64(totalEvents)
+	if actualRate < expectedRate-tolerance || actualRate > expectedRate+tolerance {
+		t.Fatalf("Invalid rate out of expected bounds: got %.4f, expected %.4f ± %.4f", actualRate, expectedRate, tolerance)
+	}
 }
