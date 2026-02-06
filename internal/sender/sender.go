@@ -16,7 +16,7 @@ const (
 
 type Sender interface {
 	SendSync(context context.Context, event event.PageViewEvent) error
-	SendAsync(context context.Context, event event.PageViewEvent) error
+	SendAsync(context context.Context, event event.PageViewEvent, callback AsyncCallback) error
 	SetBatchTime(duration time.Time)
 	SetBatchEventCount(n uint)
 	SetPartitionStrategy(strategy PartitionStrategy)
