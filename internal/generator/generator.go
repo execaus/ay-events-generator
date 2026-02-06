@@ -21,26 +21,8 @@ const defaultBounceRate = 0.1
 // Процент событий с преднамеренными ошибками
 const defaultInvalidRate = 0.05
 
-// Режим генерации по умолчанию
-const defaultMode = RegularMode
-
 // Максимальное значение длительности для определения отскока
 const bounceMax = 5_000
-
-// Режимы генерации событий
-const (
-	RegularMode  = "regular" // Постоянный поток событий
-	PickLoadMode = "pick"    // Пиковая нагрузка
-	NightMode    = "night"   // Ночные редкие события
-)
-
-// Вероятности генерации события для разных режимов
-const (
-	regularModeEventProb = 0.1
-	pickLoadMinEvents    = 5
-	pickLoadMaxEvents    = 50
-	nightModeEventProb   = 0.01
-)
 
 // Типы дефектов события
 const (
@@ -68,7 +50,7 @@ var (
 		"LATAM",
 	}
 	// Доступные режимы генерации
-	mods = [...]string{RegularMode, PickLoadMode, NightMode}
+	mods = [...]Mode{RegularMode, PickLoadMode, NightMode}
 	// Дефекты событий
 	defects = [...]int{emptyPageIDDefect, negativeDurationDefect, invalidJSONDefect}
 )
@@ -78,7 +60,7 @@ type EventGenerator struct {
 	DurationMax  int           // Максимальная длительность события
 	BounceRate   float32       // Вероятность отскока
 	InvalidRate  float32       // Вероятность преднамеренной ошибки
-	Mode         string        // Режим генерации
+	Mode         Mode          // Режим генерации
 	eventChannel chan Event    // Канал для отправки событий
 	stopChannel  chan struct{} // Канал для остановки генерации
 }
@@ -108,7 +90,7 @@ func (g *EventGenerator) SetBounceRate(value float32) *EventGenerator {
 }
 
 // SetMode задает режим генерации событий
-func (g *EventGenerator) SetMode(mode string) {
+func (g *EventGenerator) SetMode(mode Mode) {
 	if !slices.Contains(mods[:], mode) {
 		zap.L().Error("invalid mode")
 	}
@@ -162,8 +144,8 @@ func (g *EventGenerator) Event() Event {
 	return g.getValidEvent(duration, isBounce)
 }
 
-// Listen возвращает канал событий и запускает генерацию в фоне
-func (g *EventGenerator) Listen() <-chan Event {
+// Events возвращает канал событий и запускает генерацию в фоне
+func (g *EventGenerator) Events() <-chan Event {
 	go func() {
 		ticker := time.NewTicker(tickDuration)
 		defer ticker.Stop()

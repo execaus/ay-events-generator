@@ -18,10 +18,20 @@ type PageViewEvent struct {
 	IsBounce     bool      `json:"is_bounce"`
 }
 
-func (e *PageViewEvent) String() string {
+func (e *PageViewEvent) Bytes() ([]byte, error) {
 	b, err := json.Marshal(e)
 	if err != nil {
 		zap.L().Error(err.Error())
+		return nil, err
 	}
-	return string(b)
+	return b, nil
+}
+
+func (e *PageViewEvent) String() (string, error) {
+	b, err := e.Bytes()
+	if err != nil {
+		zap.L().Error(err.Error())
+		return "", nil
+	}
+	return string(b), nil
 }

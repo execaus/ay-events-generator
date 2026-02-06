@@ -68,14 +68,14 @@ func TestNightModeEventCount(t *testing.T) {
 	}
 }
 
-func getEventCount(mode string, duration time.Duration) int {
+func getEventCount(mode Mode, duration time.Duration) int {
 	g := NewEventGenerator()
 	g.SetMode(mode)
 
 	result := make(chan int)
 	go func() {
 		count := 0
-		for range g.Listen() {
+		for range g.Events() {
 			count++
 		}
 		result <- count

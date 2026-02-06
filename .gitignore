@@ -1,0 +1,50 @@
+# -------------------
+# Go build
+# -------------------
+/bin/
+/build/
+/out/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# -------------------
+# Go module
+# -------------------
+/vendor/
+
+# -------------------
+# Go test / coverage
+# -------------------
+*.test
+*.out
+coverage.out
+
+# -------------------
+# IDE / Editor
+# -------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*.DS_Store
+
+# -------------------
+# Mockgen / Generated files
+# -------------------
+/mock/
+*_mock.go
+
+# -------------------
+# Logs
+# -------------------
+*.log
+
+# -------------------
+# Docker / Dockertest
+# -------------------
+docker-compose.override.yml
+*.env
+/tmp/
