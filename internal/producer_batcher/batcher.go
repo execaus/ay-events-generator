@@ -2,7 +2,6 @@ package producer_batcher
 
 import (
 	"errors"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,20 +10,20 @@ import (
 )
 
 type Batcher[T any] struct {
-	mode          BatchMode     // Режим батчинга
-	flushTime     time.Duration // Время для TimeMode
-	flushSize     uint          // Размер батча для SizeMode
-	flushFn       Flush[T]      // Функция для отправки батча
-	buffer        [bufferMax]T  // Внутренний буфер
-	bufferPointer uint          // Индекс следующей записи в буфер
-	mutex         sync.Mutex    // Защита буфера
-	stopCh        chan struct{} // Канал остановки таймера
-	stoppedCh     chan struct{} // Канал уведомления о завершении таймера
-	stopped       atomic.Bool   // Флаг остановки батчера
+	mode      BatchMode
+	flushTime time.Duration
+	flushSize uint
+	flushFn   Flush[T]
+
+	buffer []T
+	mutex  sync.Mutex
+
+	stopCh  chan struct{}
+	wg      sync.WaitGroup
+	stopped atomic.Bool
 }
 
-// NewBatcher создает новый батчер с заданной функцией flushFn.
-// Возвращает ошибку, если flushFn не задан.
+// NewBatcher создает новый батчер с функцией flushFn.
 func NewBatcher[T any](flushFn Flush[T]) (*Batcher[T], error) {
 	if flushFn == nil {
 		return nil, errors.New("flush function not found")
@@ -35,17 +34,15 @@ func NewBatcher[T any](flushFn Flush[T]) (*Batcher[T], error) {
 		flushTime: defaultFlushTime,
 		flushSize: defaultFlushSize,
 		flushFn:   flushFn,
-		buffer:    [bufferMax]T{},
+		buffer:    make([]T, 0, 16), // небольшой стартовый буфер
 		stopCh:    make(chan struct{}),
-		stoppedCh: make(chan struct{}),
 	}
 
 	b.start()
-
 	return b, nil
 }
 
-// SetFlushTime устанавливает интервал времени для TimeMode.
+// SetFlushTime устанавливает интервал для TimeMode.
 func (b *Batcher[T]) SetFlushTime(duration time.Duration) {
 	b.flushTime = duration
 }
@@ -55,7 +52,7 @@ func (b *Batcher[T]) SetFlushSize(size uint) {
 	b.flushSize = size
 }
 
-// SetMode изменяет режим батчинга и перезапускает процесс, если режим меняется.
+// SetMode меняет режим батчинга и перезапускает таймер, если нужно.
 func (b *Batcher[T]) SetMode(mode BatchMode) {
 	if b.mode == mode {
 		return
@@ -64,9 +61,7 @@ func (b *Batcher[T]) SetMode(mode BatchMode) {
 	b.restart()
 }
 
-// Push добавляет сообщение в буфер.
-// В SizeMode при достижении flushSize вызывается flushFn асинхронно.
-// Если батчер остановлен, Push логирует ошибку и игнорирует сообщение.
+// Push добавляет сообщение в батчер.
 func (b *Batcher[T]) Push(message T) {
 	if b.stopped.Load() {
 		zap.L().Error("batcher is stopped")
@@ -74,20 +69,14 @@ func (b *Batcher[T]) Push(message T) {
 	}
 
 	b.mutex.Lock()
-
-	b.buffer[b.bufferPointer] = message
-	if b.bufferPointer < bufferMax-1 {
-		b.bufferPointer++
-	}
+	b.buffer = append(b.buffer, message)
 
 	var messages []T
 	var flushed bool
-
-	if b.mode == SizeMode && b.bufferPointer >= b.flushSize {
+	if b.mode == SizeMode && len(b.buffer) >= int(b.flushSize) {
 		messages = b.flushBuffer()
 		flushed = true
 	}
-
 	b.mutex.Unlock()
 
 	if flushed {
@@ -95,70 +84,71 @@ func (b *Batcher[T]) Push(message T) {
 	}
 }
 
-// start запускает таймерную горутину для TimeMode и сбрасывает флаг stopped.
+// start запускает таймерную горутину для TimeMode.
 func (b *Batcher[T]) start() {
 	b.stopped.Swap(false)
 	if b.mode == TimeMode {
+		b.wg.Add(1)
 		go b.timeModeProcess()
 	}
 }
 
-// restart закрывает текущий батчер и запускает его заново.
+// restart перезапускает батчер.
 func (b *Batcher[T]) restart() {
 	b.Close()
 	b.start()
 }
 
-// timeModeProcess — основной цикл таймера для TimeMode.
-// Каждые flushTime отправляет накопленные сообщения.
-// Обрабатывает остановку через stopCh.
+// timeModeProcess — цикл таймера для TimeMode.
 func (b *Batcher[T]) timeModeProcess() {
-	t := time.NewTimer(b.flushTime)
-	defer t.Stop()
+	defer b.wg.Done()
+	ticker := time.NewTicker(b.flushTime)
+	defer ticker.Stop()
 
 	for {
 		select {
-		case <-t.C:
+		case <-ticker.C:
 			b.mutex.Lock()
 			messages := b.flushBuffer()
 			b.mutex.Unlock()
-
-			go b.flushFn(messages)
-
-			t.Reset(b.flushTime)
+			if len(messages) > 0 {
+				go b.flushFn(messages)
+			}
 		case <-b.stopCh:
-			// Отправляем остаток сообщений при остановке
+			b.mutex.Lock()
 			messages := b.flushBuffer()
-			b.flushFn(messages)
-			b.stoppedCh <- struct{}{}
+			b.mutex.Unlock()
+			if len(messages) > 0 {
+				go b.flushFn(messages)
+			}
 			return
 		}
 	}
 }
 
-// flushBuffer копирует содержимое буфера и сбрасывает указатель.
+// flushBuffer копирует и очищает буфер.
 func (b *Batcher[T]) flushBuffer() []T {
-	messages := slices.Clone(b.buffer[:b.bufferPointer])
-	b.bufferPointer = 0
+	messages := make([]T, len(b.buffer))
+	copy(messages, b.buffer)
+	b.buffer = b.buffer[:0]
 	return messages
 }
 
-// Close останавливает батчер.
-// Для TimeMode останавливает таймер и отправляет остаток сообщений.
-// Для SizeMode сразу отправляет остаток сообщений.
-// Повторные вызовы игнорируются.
+// Close останавливает батчер и сбрасывает буфер.
 func (b *Batcher[T]) Close() {
 	if b.stopped.Swap(true) {
 		return
 	}
-	switch b.mode {
-	case TimeMode:
-		b.stopCh <- struct{}{}
-		<-b.stoppedCh
-	case SizeMode:
+
+	if b.mode == TimeMode {
+		close(b.stopCh)
+		b.wg.Wait()
+	} else if b.mode == SizeMode {
+		b.mutex.Lock()
 		messages := b.flushBuffer()
-		b.flushFn(messages)
-	default:
-		zap.L().Error("invalid mode")
+		b.mutex.Unlock()
+		if len(messages) > 0 {
+			b.flushFn(messages)
+		}
 	}
 }
