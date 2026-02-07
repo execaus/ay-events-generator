@@ -34,7 +34,7 @@ func NewBatcher[T any](flushFn Flush[T]) (*Batcher[T], error) {
 		flushTime: defaultFlushTime,
 		flushSize: defaultFlushSize,
 		flushFn:   flushFn,
-		buffer:    make([]T, 0, 16), // небольшой стартовый буфер
+		buffer:    make([]T, 0, bufferSize),
 		stopCh:    make(chan struct{}),
 	}
 
