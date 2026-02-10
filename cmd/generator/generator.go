@@ -5,6 +5,7 @@ import (
 	"ay-events-generator/internal/generator"
 	"ay-events-generator/internal/publisher"
 	"context"
+	"log"
 
 	"github.com/segmentio/kafka-go"
 	"go.uber.org/zap"
@@ -18,7 +19,7 @@ const (
 	publisherWorkerCount            = 8
 	publisherBufferAsyncMessageSize = 4096
 
-	kafkaAddr  = "localhost:9092"
+	kafkaAddr  = "localhost:9093"
 	kafkaTopic = "events"
 )
 
@@ -28,19 +29,19 @@ func main() {
 	gen := generator.NewEventGenerator()
 	defer gen.Close()
 
-	kafkaWriter := &kafka.Writer{
-		Addr:  kafka.TCP(kafkaAddr),
-		Topic: kafkaTopic,
+	conn, err := kafka.DialLeader(ctx, "tcp", kafkaAddr, kafkaTopic, 0)
+	if err != nil {
+		log.Fatal("failed to dial leader:", err)
 	}
 	defer func() {
-		if err := kafkaWriter.Close(); err != nil {
+		if err := conn.Close(); err != nil {
 			zap.L().Error(err.Error())
 		}
 	}()
 
 	pub := publisher.NewPublisher[event.PageViewEvent](
 		ctx,
-		getKafkaWriteFn(kafkaWriter),
+		getKafkaWriteFn(conn),
 		publisherWorkerCount,
 		publisherBufferAsyncMessageSize,
 	)
@@ -63,7 +64,7 @@ func main() {
 	}
 }
 
-func getKafkaWriteFn(writer *kafka.Writer) publisher.WriteFn[event.PageViewEvent] {
+func getKafkaWriteFn(conn *kafka.Conn) publisher.WriteFn[event.PageViewEvent] {
 	return func(ctx context.Context, message event.PageViewEvent) error {
 		b, err := message.Bytes()
 		if err != nil {
@@ -71,7 +72,7 @@ func getKafkaWriteFn(writer *kafka.Writer) publisher.WriteFn[event.PageViewEvent
 			return err
 		}
 
-		err = writer.WriteMessages(ctx,
+		_, err = conn.WriteMessages(
 			kafka.Message{
 				Key:   []byte(message.UserID),
 				Value: b,
