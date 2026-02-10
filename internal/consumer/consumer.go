@@ -35,6 +35,7 @@ func NewConsumer[T any](ctx context.Context, validMessageFn ValidMessageFn, flus
 		flushFn:        flushFn,
 	}
 
+	c.closed.Store(true)
 	c.batchSize.Store(defaultBatchSize)
 	c.tickerPeriod.Store(defaultPeriodTime)
 
@@ -78,19 +79,20 @@ func (c *Consumer[T]) SetTickerPeriod(period time.Duration) {
 // In возвращает входной канал для отправки сообщений в Consumer.
 // Запускает проксирующую горутину, которая пересылает данные во внутренний readCh
 // и завершается при закрытии Consumer или контекста.
-func (c *Consumer[T]) In(ctx context.Context) <-chan []byte {
+func (c *Consumer[T]) In(ctx context.Context) chan<- []byte {
 	in := make(chan []byte)
 
 	c.closedWg.Add(1)
 	go func() {
 		defer c.closedWg.Done()
-		for v := range in {
+		for {
 			select {
 			case <-c.closeCh:
 				return
 			case <-ctx.Done():
 				return
-			case c.readCh <- v:
+			case v := <-in:
+				c.readCh <- v
 			}
 		}
 	}()
@@ -105,16 +107,19 @@ func (c *Consumer[T]) batchProcess(ctx context.Context) {
 
 	go func() {
 		defer c.closedWg.Done()
+
 		for {
 			select {
+			case <-ctx.Done():
+				return
+			case <-c.closeCh:
+				return
 			case v := <-c.readCh:
 				c.buffer = append(c.buffer, v)
 
 				if int(c.batchSize.Load()) <= len(c.buffer) {
 					c.flush(ctx)
 				}
-			case <-c.closeCh:
-				return
 			}
 		}
 	}()
