@@ -4,6 +4,7 @@ import "time"
 
 const (
 	bufferSize        = 131072
+	dlqBufferSize     = 131072
 	minBatchSize      = 1
 	maxBatchSize      = 10_000
 	defaultBatchSize  = minBatchSize

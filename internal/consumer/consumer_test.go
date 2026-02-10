@@ -2,6 +2,7 @@ package consumer
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,7 +16,9 @@ func TestBatchModeFlush(t *testing.T) {
 	var flushed atomic.Int32
 	done := make(chan struct{})
 
-	c := NewConsumer[string](ctx, nil, func(ctx context.Context, buf [][]byte) error {
+	c := NewConsumer[string](ctx, func(data string) error {
+		return nil
+	}, func(ctx context.Context, buf []string) error {
 		flushed.Add(int32(len(buf)))
 		close(done) // сигнал о завершении flush
 		return nil
@@ -26,8 +29,8 @@ func TestBatchModeFlush(t *testing.T) {
 	in := c.In(ctx)
 
 	// отправляем сообщения
-	in <- []byte("a")
-	in <- []byte("b")
+	in <- "a"
+	in <- "b"
 
 	// ждём завершения flush
 	select {
@@ -51,7 +54,9 @@ func TestTimeModeFlush(t *testing.T) {
 	var flushed atomic.Int32
 	done := make(chan struct{})
 
-	c := NewConsumer[string](ctx, nil, func(ctx context.Context, buf [][]byte) error {
+	c := NewConsumer[string](ctx, func(data string) error {
+		return nil
+	}, func(ctx context.Context, buf []string) error {
 		flushed.Add(int32(len(buf)))
 		close(done)
 		return nil
@@ -60,7 +65,7 @@ func TestTimeModeFlush(t *testing.T) {
 	_ = c.SetMode(t.Context(), TimeMode)
 
 	in := c.In(ctx)
-	in <- []byte("a")
+	in <- "a"
 
 	select {
 	case <-done:
@@ -83,7 +88,9 @@ func TestHybridModeFlushByBatch(t *testing.T) {
 	var flushed atomic.Int32
 	done := make(chan struct{})
 
-	c := NewConsumer[string](ctx, nil, func(ctx context.Context, buf [][]byte) error {
+	c := NewConsumer[string](ctx, func(data string) error {
+		return nil
+	}, func(ctx context.Context, buf []string) error {
 		flushed.Add(int32(len(buf)))
 		close(done)
 		return nil
@@ -93,8 +100,8 @@ func TestHybridModeFlushByBatch(t *testing.T) {
 	_ = c.SetMode(t.Context(), HybridMode)
 
 	in := c.In(ctx)
-	in <- []byte("a")
-	in <- []byte("b")
+	in <- "a"
+	in <- "b"
 
 	select {
 	case <-done:
@@ -113,7 +120,9 @@ func TestHybridModeFlushByBatch(t *testing.T) {
 func TestCloseIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 
-	c := NewConsumer[string](ctx, nil, func(ctx context.Context, buf [][]byte) error {
+	c := NewConsumer[string](ctx, func(data string) error {
+		return nil
+	}, func(ctx context.Context, buf []string) error {
 		return nil
 	})
 
@@ -132,14 +141,16 @@ func TestNoDeadlockOnCloseWithInFlightSend(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	c := NewConsumer[string](ctx, nil, func(ctx context.Context, buf [][]byte) error {
+	c := NewConsumer[string](ctx, func(data string) error {
+		return nil
+	}, func(ctx context.Context, buf []string) error {
 		return nil
 	})
 
 	in := c.In(ctx)
 
 	go func() {
-		in <- []byte("a")
+		in <- "a"
 	}()
 
 	done := make(chan struct{})
@@ -153,4 +164,36 @@ func TestNoDeadlockOnCloseWithInFlightSend(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("Close() deadlocked")
 	}
+}
+
+func TestInvalidMessagesGoToDLQ(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	c := NewConsumer[string](ctx, func(data string) error {
+		return errors.New("invalid message")
+	}, func(ctx context.Context, buf []string) error {
+		t.Fatal("flushFn should not be called for invalid messages")
+		return nil
+	})
+
+	_ = c.SetMode(t.Context(), BatchMode)
+
+	in := c.In(ctx)
+
+	in <- "bad-message"
+
+	select {
+	case msg := <-c.DLQ():
+		if msg.Message != "bad-message" {
+			t.Fatalf("expected message 'bad-message', got %q", msg.Message)
+		}
+		if msg.Err == nil {
+			t.Fatal("expected error in DLQ message, got nil")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("DLQ did not receive message")
+	}
+
+	_ = c.Close()
 }

@@ -13,13 +13,14 @@ import (
 // Consumer отвечает за накопление входящих сообщений и их периодический flush
 // в зависимости от выбранного режима работы.
 type Consumer[T any] struct {
-	validMessageFn ValidMessageFn
-	readCh         chan []byte
+	validMessageFn ValidMessageFn[T]
+	readCh         chan T
 	mode           Mode
-	buffer         [][]byte
+	buffer         []T
 	batchSize      atomic.Int32
-	flushFn        FlushFn
+	flushFn        FlushFn[T]
 	tickerPeriod   atomic.Value
+	dlq            chan DLQMessage[T]
 	closeCh        chan struct{}
 	closedWg       sync.WaitGroup
 	closed         atomic.Bool
@@ -27,12 +28,13 @@ type Consumer[T any] struct {
 
 // NewConsumer создает новый Consumer и сразу запускает обработку сообщений
 // в соответствии с текущим режимом работы.
-func NewConsumer[T any](ctx context.Context, validMessageFn ValidMessageFn, flushFn FlushFn) *Consumer[T] {
+func NewConsumer[T any](ctx context.Context, validMessageFn ValidMessageFn[T], flushFn FlushFn[T]) *Consumer[T] {
 	c := &Consumer[T]{
 		validMessageFn: validMessageFn,
-		readCh:         make(chan []byte),
-		buffer:         make([][]byte, 0, bufferSize),
+		readCh:         make(chan T),
+		buffer:         make([]T, 0, bufferSize),
 		flushFn:        flushFn,
+		dlq:            make(chan DLQMessage[T], dlqBufferSize),
 	}
 
 	c.closed.Store(true)
@@ -79,12 +81,15 @@ func (c *Consumer[T]) SetTickerPeriod(period time.Duration) {
 // In возвращает входной канал для отправки сообщений в Consumer.
 // Запускает проксирующую горутину, которая пересылает данные во внутренний readCh
 // и завершается при закрытии Consumer или контекста.
-func (c *Consumer[T]) In(ctx context.Context) chan<- []byte {
-	in := make(chan []byte)
+func (c *Consumer[T]) In(ctx context.Context) chan<- T {
+	in := make(chan T)
 
 	c.closedWg.Add(1)
 	go func() {
 		defer c.closedWg.Done()
+
+		var err error
+
 		for {
 			select {
 			case <-c.closeCh:
@@ -92,12 +97,30 @@ func (c *Consumer[T]) In(ctx context.Context) chan<- []byte {
 			case <-ctx.Done():
 				return
 			case v := <-in:
+				err = c.validMessageFn(v)
+				if err != nil {
+					select {
+					case c.dlq <- DLQMessage[T]{
+						Message: v,
+						Err:     err,
+					}:
+					default:
+						zap.L().Error("dlq is full, dropping message")
+					}
+
+					continue
+				}
+
 				c.readCh <- v
 			}
 		}
 	}()
 
 	return in
+}
+
+func (c *Consumer[T]) DLQ() <-chan DLQMessage[T] {
+	return c.dlq
 }
 
 // batchProcess накапливает сообщения и вызывает flush

@@ -2,4 +2,4 @@ package consumer
 
 import "context"
 
-type FlushFn = func(context.Context, [][]byte) error
+type FlushFn[T any] = func(context.Context, []T) error
