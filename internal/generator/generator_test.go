@@ -12,7 +12,7 @@ func TestViewDurationMaxBound(t *testing.T) {
 	g.SetDurationMax(maxDuration)
 
 	for range 1000 {
-		e := g.Event()
+		e := g.event()
 		if !e.Meta.IsInvalid && e.Event.ViewDuration <= 0 || e.Event.ViewDuration > maxDuration {
 			t.Fatalf("ViewDuration out of bounds: %d", e.Event.ViewDuration)
 		}
@@ -22,8 +22,8 @@ func TestViewDurationMaxBound(t *testing.T) {
 func TestRandomizationActuallyChangesValues(t *testing.T) {
 	g := NewEventGenerator()
 
-	e1 := g.Event()
-	e2 := g.Event()
+	e1 := g.event()
+	e2 := g.event()
 
 	if e1.Event.PageID == e2.Event.PageID {
 		t.Fatal("PageID did not change between events")
@@ -97,7 +97,7 @@ func TestInvalidEventRate(t *testing.T) {
 
 	invalidCount := 0
 	for range totalEvents {
-		e := g.Event()
+		e := g.event()
 		if e.Meta.IsInvalid {
 			invalidCount++
 		}

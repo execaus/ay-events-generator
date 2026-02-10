@@ -57,35 +57,35 @@ var (
 
 // EventGenerator структура генератора событий
 type EventGenerator struct {
-	DurationMax  int           // Максимальная длительность события
-	BounceRate   float32       // Вероятность отскока
-	InvalidRate  float32       // Вероятность преднамеренной ошибки
-	Mode         Mode          // Режим генерации
-	eventChannel chan Event    // Канал для отправки событий
-	stopChannel  chan struct{} // Канал для остановки генерации
+	durationMax int           // Максимальная длительность события
+	bounceRate  float32       // Вероятность отскока
+	invalidRate float32       // Вероятность преднамеренной ошибки
+	mode        Mode          // Режим генерации
+	eventCh     chan Event    // Канал для отправки событий
+	stopCh      chan struct{} // Канал для остановки генерации
 }
 
 // NewEventGenerator создает новый экземпляр генератора событий с настройками по умолчанию
 func NewEventGenerator() *EventGenerator {
 	return &EventGenerator{
-		DurationMax:  defaultDurationMax,
-		BounceRate:   defaultBounceRate,
-		InvalidRate:  defaultInvalidRate,
-		Mode:         defaultMode,
-		eventChannel: make(chan Event),
-		stopChannel:  make(chan struct{}),
+		durationMax: defaultDurationMax,
+		bounceRate:  defaultBounceRate,
+		invalidRate: defaultInvalidRate,
+		mode:        defaultMode,
+		eventCh:     make(chan Event),
+		stopCh:      make(chan struct{}),
 	}
 }
 
 // SetDurationMax задает максимальную длительность события
 func (g *EventGenerator) SetDurationMax(value int) *EventGenerator {
-	g.DurationMax = value
+	g.durationMax = value
 	return g
 }
 
 // SetBounceRate задает вероятность "отскока" для событий
 func (g *EventGenerator) SetBounceRate(value float32) *EventGenerator {
-	g.BounceRate = value
+	g.bounceRate = value
 	return g
 }
 
@@ -94,17 +94,17 @@ func (g *EventGenerator) SetMode(mode Mode) {
 	if !slices.Contains(mods[:], mode) {
 		zap.L().Error("invalid mode")
 	}
-	g.Mode = mode
+	g.mode = mode
 }
 
 // SetInvalidRate задает вероятность преднамеренной ошибки в событии
 func (g *EventGenerator) SetInvalidRate(value float32) {
-	g.InvalidRate = value
+	g.invalidRate = value
 }
 
 // eventTick определяет количество событий, генерируемых за тик, в зависимости от режима
 func (g *EventGenerator) eventTick() int {
-	switch g.Mode {
+	switch g.mode {
 	case RegularMode:
 		if mrand.Float32() < regularModeEventProb {
 			return 0
@@ -124,18 +124,18 @@ func (g *EventGenerator) eventTick() int {
 }
 
 // Event генерирует одно событие PageViewEvent
-func (g *EventGenerator) Event() Event {
+func (g *EventGenerator) event() Event {
 	var isBounce, isInvalid bool
 
-	duration := mrand.Intn(g.DurationMax) + 1
+	duration := mrand.Intn(g.durationMax) + 1
 
 	if duration < bounceMax {
 		isBounce = false
 	} else {
-		isBounce = mrand.Float32() < g.BounceRate
+		isBounce = mrand.Float32() < g.bounceRate
 	}
 
-	isInvalid = mrand.Float32() < g.InvalidRate
+	isInvalid = mrand.Float32() < g.invalidRate
 
 	if isInvalid {
 		return g.getInvalidEvent()
@@ -152,21 +152,21 @@ func (g *EventGenerator) Events() <-chan Event {
 
 		for {
 			select {
-			case <-g.stopChannel:
-				close(g.eventChannel)
+			case <-g.stopCh:
+				close(g.eventCh)
 				return
 			case <-ticker.C:
 				for range g.eventTick() {
-					g.eventChannel <- g.Event()
+					g.eventCh <- g.event()
 				}
 			}
 		}
 	}()
-	return g.eventChannel
+	return g.eventCh
 }
 
 func (g *EventGenerator) Close() {
-	close(g.stopChannel)
+	close(g.stopCh)
 }
 
 func (g *EventGenerator) randomUserAgent() string {
@@ -194,7 +194,7 @@ func (g *EventGenerator) getInvalidEvent() Event {
 		e = event.PageViewEvent{
 			PageID:       "",
 			UserID:       uuid.NewString(),
-			ViewDuration: mrand.Intn(g.DurationMax) + 1,
+			ViewDuration: mrand.Intn(g.durationMax) + 1,
 			Timestamp:    time.Now(),
 			UserAgent:    g.randomUserAgent(),
 			IPAddress:    g.randomIPv4(),
@@ -205,7 +205,7 @@ func (g *EventGenerator) getInvalidEvent() Event {
 		e = event.PageViewEvent{
 			PageID:       uuid.NewString(),
 			UserID:       uuid.NewString(),
-			ViewDuration: -(mrand.Intn(g.DurationMax) + 1),
+			ViewDuration: -(mrand.Intn(g.durationMax) + 1),
 			Timestamp:    time.Now(),
 			UserAgent:    g.randomUserAgent(),
 			IPAddress:    g.randomIPv4(),
@@ -216,7 +216,7 @@ func (g *EventGenerator) getInvalidEvent() Event {
 		e = event.PageViewEvent{
 			PageID:       uuid.NewString(),
 			UserID:       uuid.NewString(),
-			ViewDuration: mrand.Intn(g.DurationMax) + 1,
+			ViewDuration: mrand.Intn(g.durationMax) + 1,
 			Timestamp:    time.Now(),
 			UserAgent:    string([]byte{0xff, 0xfe, 0xfd}), // некорректные байты
 			IPAddress:    g.randomIPv4(),
