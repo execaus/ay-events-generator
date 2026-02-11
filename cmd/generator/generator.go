@@ -1,11 +1,13 @@
 package main
 
 import (
+	"ay-events-generator/internal/dispatcher"
 	"ay-events-generator/internal/event"
 	"ay-events-generator/internal/generator"
+	"ay-events-generator/internal/partitioner"
+	"ay-events-generator/internal/producer_batcher"
 	"ay-events-generator/internal/publisher"
 	"context"
-	"log"
 
 	"github.com/segmentio/kafka-go"
 	"go.uber.org/zap"
@@ -21,7 +23,16 @@ const (
 
 	kafkaAddr  = "localhost:9093"
 	kafkaTopic = "events"
+
+	kafkaPartitionCount = 5
 )
+
+/*
+Должен ли идти один контекст от генерации события до его отправки в брокер?
+Обработка после batch сбора, приходит массив message, партиционирование после сложное, если на основе key.
+Делать какой-то буфер для каждой отдельной партиции, то есть сначала select partition
+и только потом batch?
+*/
 
 func main() {
 	ctx := context.Background()
@@ -29,19 +40,76 @@ func main() {
 	gen := generator.NewEventGenerator()
 	defer gen.Close()
 
-	conn, err := kafka.DialLeader(ctx, "tcp", kafkaAddr, kafkaTopic, 0)
-	if err != nil {
-		log.Fatal("failed to dial leader:", err)
+	var kafkaPartitionConnections []*kafka.Conn
+	for i := range kafkaPartitionCount {
+		conn, err := kafka.DialLeader(ctx, "tcp", kafkaAddr, kafkaTopic, i)
+		if err != nil {
+			zap.L().Fatal(err.Error())
+		}
+		kafkaPartitionConnections = append(kafkaPartitionConnections, conn)
 	}
 	defer func() {
-		if err := conn.Close(); err != nil {
-			zap.L().Error(err.Error())
+		for _, conn := range kafkaPartitionConnections {
+			if err := conn.Close(); err != nil {
+				zap.L().Error(err.Error())
+			}
 		}
 	}()
 
+	disp := dispatcher.NewDispatcher()
+
+	part := partitioner.NewPartitioner[event.PageViewEvent](func(ctx context.Context, partition int, message event.PageViewEvent) error {
+		b, err := message.Bytes()
+		if err != nil {
+			zap.L().Error(err.Error())
+			return err
+		}
+		_, err = kafkaPartitionConnections[partition].WriteMessages(kafka.Message{
+			Key:   []byte(message.UserID),
+			Value: b,
+		})
+		if err != nil {
+			zap.L().Error(err.Error())
+			return err
+		}
+
+		return nil
+	})
+	if err := part.SetRoundRobinMode(kafkaPartitionCount); err != nil {
+		zap.L().Fatal(err.Error())
+	}
+
+	bat, err := producer_batcher.NewBatcher[event.PageViewEvent](func(messages []event.PageViewEvent) {
+		// TODO отправить пачкой
+		for _, m := range messages {
+			write, err := part.WriteFn(m)
+			if err != nil {
+				zap.L().Error(err.Error())
+				continue
+			}
+			if err = disp.Write(ctx, func(ctx context.Context) error {
+				if err := write(ctx, m); err != nil {
+					zap.L().Error(err.Error())
+					return err
+				}
+
+				return nil
+			}); err != nil {
+				zap.L().Error(err.Error())
+				continue
+			}
+		}
+	})
+	if err != nil {
+		zap.L().Fatal(err.Error())
+	}
+
 	pub := publisher.NewPublisher[event.PageViewEvent](
 		ctx,
-		getKafkaWriteFn(conn),
+		func(ctx context.Context, message event.PageViewEvent) error {
+			bat.Push(message)
+			return nil
+		},
 		publisherWorkerCount,
 		publisherBufferAsyncMessageSize,
 	)
@@ -61,28 +129,5 @@ func main() {
 		}); err != nil {
 			zap.L().Error(err.Error())
 		}
-	}
-}
-
-func getKafkaWriteFn(conn *kafka.Conn) publisher.WriteFn[event.PageViewEvent] {
-	return func(ctx context.Context, message event.PageViewEvent) error {
-		b, err := message.Bytes()
-		if err != nil {
-			zap.L().Error(err.Error())
-			return err
-		}
-
-		_, err = conn.WriteMessages(
-			kafka.Message{
-				Key:   []byte(message.UserID),
-				Value: b,
-			},
-		)
-		if err != nil {
-			zap.L().Error(err.Error())
-			return err
-		}
-
-		return nil
 	}
 }

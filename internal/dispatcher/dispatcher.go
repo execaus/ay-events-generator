@@ -7,19 +7,25 @@ import (
 	"go.uber.org/zap"
 )
 
-type Dispatcher[T any] struct {
-	writer Writer[T]
+type Dispatcher struct{}
+
+// NewDispatcher создает и возвращает новый экземпляр Dispatcher.
+// Используется для инициализации диспетчера без дополнительной конфигурации.
+func NewDispatcher() *Dispatcher {
+	return &Dispatcher{}
 }
 
-func NewDispatcher[T any](writer Writer[T]) *Dispatcher[T] {
-	return &Dispatcher[T]{writer: writer}
+// Write выполняет запись с использованием механизма повторных попыток (backoff).
+// Принимает контекст для управления отменой и функцию записи writeFn.
+func (d *Dispatcher) Write(ctx context.Context, writeFn WriteFn) error {
+	return d.writeWithBackoff(ctx, writeFn)
 }
 
-func (d *Dispatcher[T]) Write(ctx context.Context, data T) error {
-	return d.writeWithBackoff(ctx, data)
-}
-
-func (d *Dispatcher[T]) writeWithBackoff(ctx context.Context, data T) error {
+// writeWithBackoff реализует логику повторных попыток записи с экспоненциальным увеличением таймаута.
+// При ошибке выполнения singleWrite таймаут увеличивается согласно коэффициенту backoffMultiply.
+// Если контекст отменен — возвращается ошибка контекста.
+// Если превышено количество попыток — возвращается ErrBackoffTimeout.
+func (d *Dispatcher) writeWithBackoff(ctx context.Context, writeFn WriteFn) error {
 	timeout := startBackoffTimeout
 
 	for range backoffAttemptCount {
@@ -27,7 +33,7 @@ func (d *Dispatcher[T]) writeWithBackoff(ctx context.Context, data T) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			if err := d.singleWrite(ctx, timeout, data); err != nil {
+			if err := d.singleWrite(ctx, timeout, writeFn); err != nil {
 				zap.L().Error(err.Error())
 				timeout = time.Duration(float64(timeout) * backoffMultiply)
 				continue
@@ -40,11 +46,14 @@ func (d *Dispatcher[T]) writeWithBackoff(ctx context.Context, data T) error {
 	return ErrBackoffTimeout
 }
 
-func (d *Dispatcher[T]) singleWrite(ctx context.Context, timeout time.Duration, data T) error {
+// singleWrite выполняет одну попытку записи с ограничением по времени.
+// Создает дочерний контекст с таймаутом и вызывает переданную функцию writeFn.
+// В случае ошибки логирует её и возвращает вызывающему коду.
+func (d *Dispatcher) singleWrite(ctx context.Context, timeout time.Duration, writeFn WriteFn) error {
 	ctxT, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	if err := d.writer.Write(ctxT, data); err != nil {
+	if err := writeFn(ctxT); err != nil {
 		zap.L().Error(err.Error())
 		return err
 	}

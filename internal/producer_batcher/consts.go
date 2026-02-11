@@ -6,7 +6,7 @@ import (
 
 const (
 	defaultFlushTime           = 2 * time.Second
-	defaultFlushSize           = 300
+	defaultFlushSize           = 30
 	defaultMode      BatchMode = SizeMode
 	bufferSize                 = 8192
 )
