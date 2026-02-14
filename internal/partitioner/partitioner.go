@@ -34,37 +34,29 @@ func NewPartitioner[T any](writeFn WritePartitionFn[T]) *Partitioner[T] {
 }
 
 // WriteFn выбирает партицию в соответствии с текущей конфигурацией
-// и возвращает функцию записи, привязанную к выбранной партиции.
-// Выбор партиции происходит в момент вызова WriteFn и не меняется
-// для возвращаемой функции.
-func (p *Partitioner[T]) WriteFn(message T) (WriteFn[T], error) {
+// и передает сообщение в ранее переданную функцию для отправки в партицию.
+func (p *Partitioner[T]) WriteFn(ctx context.Context, message T) error {
 	config := p.config.Load().(*Config[T])
 
 	switch config.mode {
 	case roundRobinMode:
 		index := config.rr.Load()
-		return func(ctx context.Context, message T) error {
-			return p.writePartitionFn(ctx, index, message)
-		}, nil
+		return p.writePartitionFn(ctx, index, message)
 
 	case keyMode:
 		key := config.keyFn(message)
 		index := p.hashToRange(key, config.count)
-		return func(ctx context.Context, message T) error {
-			return p.writePartitionFn(ctx, index, message)
-		}, nil
+		return p.writePartitionFn(ctx, index, message)
 
 	case randomMode:
 		index := rand.Intn(config.count)
-		return func(ctx context.Context, message T) error {
-			return p.writePartitionFn(ctx, index, message)
-		}, nil
+		return p.writePartitionFn(ctx, index, message)
 
 	default:
 		zap.L().Error("invalid mode")
 	}
 
-	return nil, ErrInvalidMode
+	return ErrInvalidMode
 }
 
 // SetRandomMode переключает Partitioner в случайный режим.
