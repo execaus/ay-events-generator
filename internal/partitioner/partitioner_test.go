@@ -31,9 +31,8 @@ func TestPartitioner_RandomMode_Range(t *testing.T) {
 	assert.NoError(t, err)
 
 	for i := 0; i < 100; i++ {
-		fn, err := p.WriteFn(i)
+		err := p.WriteFn(context.Background(), i)
 		assert.NoError(t, err)
-		_ = fn(context.Background(), i)
 	}
 
 	for _, idx := range got {
@@ -53,9 +52,8 @@ func TestPartitioner_KeyMode_StablePartition(t *testing.T) {
 	assert.NoError(t, err)
 
 	for i := 0; i < 10; i++ {
-		fn, err := p.WriteFn("same-key")
+		err := p.WriteFn(context.Background(), "same-key")
 		assert.NoError(t, err)
-		_ = fn(context.Background(), "same-key")
 	}
 
 	assert.NotEmpty(t, got)
@@ -76,9 +74,8 @@ func TestPartitioner_RoundRobinMode(t *testing.T) {
 	assert.NoError(t, err)
 
 	for i := 0; i < 6; i++ {
-		fn, err := p.WriteFn(i)
+		err := p.WriteFn(context.Background(), i)
 		assert.NoError(t, err)
-		_ = fn(context.Background(), i)
 	}
 
 	want := []int{0, 1, 2, 0, 1, 2}

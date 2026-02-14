@@ -1,6 +1,7 @@
 package producer_batcher
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -15,7 +16,7 @@ type Batcher[T any] struct {
 	flushSize uint
 	flushFn   Flush[T]
 
-	buffer []T
+	buffer []Message[T]
 	mutex  sync.Mutex
 
 	stopCh  chan struct{}
@@ -34,7 +35,7 @@ func NewBatcher[T any](flushFn Flush[T]) (*Batcher[T], error) {
 		flushTime: defaultFlushTime,
 		flushSize: defaultFlushSize,
 		flushFn:   flushFn,
-		buffer:    make([]T, 0, bufferSize),
+		buffer:    make([]Message[T], 0, bufferSize),
 		stopCh:    make(chan struct{}),
 	}
 
@@ -62,16 +63,19 @@ func (b *Batcher[T]) SetMode(mode BatchMode) {
 }
 
 // Push добавляет сообщение в батчер.
-func (b *Batcher[T]) Push(message T) {
+func (b *Batcher[T]) Push(ctx context.Context, message T) error {
 	if b.stopped.Load() {
-		zap.L().Error("batcher is stopped")
-		return
+		zap.L().Error(ErrBatchStopped.Error())
+		return ErrBatchStopped
 	}
 
 	b.mutex.Lock()
-	b.buffer = append(b.buffer, message)
+	b.buffer = append(b.buffer, Message[T]{
+		Ctx:  ctx,
+		Data: message,
+	})
 
-	var messages []T
+	var messages []Message[T]
 	var flushed bool
 	if b.mode == SizeMode && len(b.buffer) >= int(b.flushSize) {
 		messages = b.flushBuffer()
@@ -82,6 +86,8 @@ func (b *Batcher[T]) Push(message T) {
 	if flushed {
 		go b.flushFn(messages)
 	}
+
+	return nil
 }
 
 // start запускает таймерную горутину для TimeMode.
@@ -127,8 +133,8 @@ func (b *Batcher[T]) timeModeProcess() {
 }
 
 // flushBuffer копирует и очищает буфер.
-func (b *Batcher[T]) flushBuffer() []T {
-	messages := make([]T, len(b.buffer))
+func (b *Batcher[T]) flushBuffer() []Message[T] {
+	messages := make([]Message[T], len(b.buffer))
 	copy(messages, b.buffer)
 	b.buffer = b.buffer[:0]
 	return messages

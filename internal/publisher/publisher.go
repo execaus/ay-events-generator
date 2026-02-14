@@ -68,6 +68,7 @@ func (w *Publisher[T]) SendAsync(ctx context.Context, message T, callback AsyncC
 	}
 
 	w.asyncMessagesCh <- AsyncMessage[T]{
+		Ctx:      ctx,
 		Message:  message,
 		Callback: callback,
 	}
@@ -103,7 +104,7 @@ func (w *Publisher[T]) worker(ctx context.Context, wg *sync.WaitGroup) {
 		case <-w.closeCh:
 			return
 		case m := <-w.asyncMessagesCh:
-			err = w.write(ctx, m.Message)
+			err = w.write(m.Ctx, m.Message)
 			if err != nil {
 				zap.L().Error(err.Error())
 			}

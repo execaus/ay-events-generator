@@ -41,8 +41,8 @@ func main() {
 	defer gen.Close()
 
 	var partitionConnections []*kafka.Conn
-	for i := range kafkaPartitionCount {
-		conn, err := kafka.DialLeader(ctx, "tcp", kafkaAddr, kafkaTopic, i)
+	for partition := range kafkaPartitionCount {
+		conn, err := kafka.DialLeader(ctx, "tcp", kafkaAddr, kafkaTopic, partition)
 		if err != nil {
 			zap.L().Fatal(err.Error())
 		}
@@ -60,20 +60,20 @@ func main() {
 
 	var partitionBatchers []*producer_batcher.Batcher[event.PageViewEvent]
 	for partition := range kafkaPartitionCount {
-		bat, err := producer_batcher.NewBatcher[event.PageViewEvent](func(messages []event.PageViewEvent) {
+		flushFn := func(messages []producer_batcher.Message[event.PageViewEvent]) {
 			// TODO ctxMerged := context_merger.Merge()
 			if err := disp.Write(context.TODO(), func(ctx context.Context) error {
 				kafkaMessages := make([]kafka.Message, len(messages))
 
 				for i, message := range messages {
-					b, err := message.Bytes()
+					b, err := message.Data.Bytes()
 					if err != nil {
 						zap.L().Error(err.Error())
 						continue
 					}
 
 					kafkaMessages[i] = kafka.Message{
-						Key:   []byte(message.UserID),
+						Key:   []byte(message.Data.UserID),
 						Value: b,
 					}
 				}
@@ -89,7 +89,8 @@ func main() {
 				zap.L().Error(err.Error())
 				return
 			}
-		})
+		}
+		bat, err := producer_batcher.NewBatcher[event.PageViewEvent](flushFn)
 		if err != nil {
 			zap.L().Fatal(err.Error())
 		}
@@ -98,7 +99,7 @@ func main() {
 	}
 
 	part := partitioner.NewPartitioner[event.PageViewEvent](func(ctx context.Context, partition int, message event.PageViewEvent) error {
-		err := partitionBatchers[partition].Push(message)
+		err := partitionBatchers[partition].Push(ctx, message)
 		if err != nil {
 			zap.L().Error(err.Error())
 			return err

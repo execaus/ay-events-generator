@@ -2,6 +2,7 @@ package producer_batcher_test
 
 import (
 	"ay-events-generator/internal/producer_batcher"
+	"context"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -10,7 +11,7 @@ import (
 // TestSizeModeFlush проверяет, что SizeMode вызывает flushFn при достижении flushSize.
 func TestSizeModeFlush(t *testing.T) {
 	var called int32
-	flushFn := func(batch []int) {
+	flushFn := func(batch []producer_batcher.Message[int]) {
 		atomic.AddInt32(&called, 1)
 	}
 
@@ -19,9 +20,9 @@ func TestSizeModeFlush(t *testing.T) {
 	b.SetFlushSize(3)
 
 	// Push три элемента — должно вызвать flushFn один раз
-	b.Push(1)
-	b.Push(2)
-	b.Push(3)
+	_ = b.Push(context.Background(), 1)
+	_ = b.Push(context.Background(), 2)
+	_ = b.Push(context.Background(), 3)
 
 	time.Sleep(50 * time.Millisecond) // ждем асинхронный вызов
 	if atomic.LoadInt32(&called) != 1 {
@@ -32,7 +33,7 @@ func TestSizeModeFlush(t *testing.T) {
 // TestTimeModeFlush проверяет, что TimeMode вызывает flushFn по таймеру.
 func TestTimeModeFlush(t *testing.T) {
 	var called int32
-	flushFn := func(batch []int) {
+	flushFn := func(batch []producer_batcher.Message[int]) {
 		atomic.AddInt32(&called, 1)
 	}
 
@@ -40,8 +41,8 @@ func TestTimeModeFlush(t *testing.T) {
 	b.SetFlushTime(50 * time.Millisecond)
 	b.SetMode(producer_batcher.TimeMode)
 
-	b.Push(1)
-	b.Push(2)
+	_ = b.Push(context.Background(), 1)
+	_ = b.Push(context.Background(), 2)
 
 	time.Sleep(120 * time.Millisecond) // ждем таймер
 	if atomic.LoadInt32(&called) == 0 {
@@ -52,7 +53,7 @@ func TestTimeModeFlush(t *testing.T) {
 // TestCloseFlush проверяет, что Close отправляет остаток сообщений.
 func TestCloseFlush(t *testing.T) {
 	var called int32
-	flushFn := func(batch []int) {
+	flushFn := func(batch []producer_batcher.Message[int]) {
 		if len(batch) != 2 {
 			t.Errorf("expected 2 messages in batch, got %d", len(batch))
 		}
@@ -63,8 +64,8 @@ func TestCloseFlush(t *testing.T) {
 	b.SetMode(producer_batcher.SizeMode)
 	b.SetFlushSize(5)
 
-	b.Push(1)
-	b.Push(2)
+	_ = b.Push(context.Background(), 1)
+	_ = b.Push(context.Background(), 2)
 
 	b.Close() // должен вызвать flushFn
 	if atomic.LoadInt32(&called) != 1 {
@@ -75,13 +76,13 @@ func TestCloseFlush(t *testing.T) {
 // TestPushAfterClose проверяет, что Push после Close игнорируется.
 func TestPushAfterClose(t *testing.T) {
 	var called int32
-	flushFn := func(batch []int) {
+	flushFn := func(batch []producer_batcher.Message[int]) {
 		atomic.AddInt32(&called, 1)
 	}
 
 	b, _ := producer_batcher.NewBatcher[int](flushFn)
 	b.Close()
-	b.Push(1)
+	_ = b.Push(context.Background(), 1)
 
 	time.Sleep(50 * time.Millisecond)
 	if atomic.LoadInt32(&called) != 0 {
