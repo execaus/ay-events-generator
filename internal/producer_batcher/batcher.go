@@ -63,7 +63,7 @@ func (b *Batcher[T]) SetMode(mode BatchMode) {
 }
 
 // Push добавляет сообщение в батчер.
-func (b *Batcher[T]) Push(ctx context.Context, message T) error {
+func (b *Batcher[T]) Push(ctx context.Context, message T, callback Callback[T]) error {
 	if b.stopped.Load() {
 		zap.L().Error(ErrBatchStopped.Error())
 		return ErrBatchStopped
@@ -71,8 +71,9 @@ func (b *Batcher[T]) Push(ctx context.Context, message T) error {
 
 	b.mutex.Lock()
 	b.buffer = append(b.buffer, Message[T]{
-		Ctx:  ctx,
-		Data: message,
+		Ctx:      ctx,
+		Data:     message,
+		Callback: callback,
 	})
 
 	var messages []Message[T]

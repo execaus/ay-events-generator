@@ -54,7 +54,7 @@ func main() {
 
 	partitionBatchers := make([]*producer_batcher.Batcher[event.PageViewEvent], kafkaPartitionCount)
 	for partition := range kafkaPartitionCount {
-		flushFn := func(messages []producer_batcher.Message[event.PageViewEvent]) {
+		bat, err := producer_batcher.NewBatcher[event.PageViewEvent](func(messages []producer_batcher.Message[event.PageViewEvent]) {
 			contexts := make([]context.Context, len(messages))
 
 			for i, message := range messages {
@@ -65,12 +65,16 @@ func main() {
 			defer cancel()
 
 			if err := disp.Write(ctxMerged, func(ctx context.Context) error {
+				validMessages := make([]producer_batcher.Message[event.PageViewEvent], 0, len(messages))
 				kafkaMessages := make([]kafka.Message, len(messages))
 
 				for i, message := range messages {
 					b, err := message.Data.Bytes()
 					if err != nil {
 						zap.L().Error(err.Error())
+						if message.Callback != nil {
+							message.Callback(ctx, message.Data, err)
+						}
 						continue
 					}
 
@@ -78,12 +82,26 @@ func main() {
 						Key:   []byte(message.Data.UserID),
 						Value: b,
 					}
+					validMessages = append(validMessages, message)
 				}
 
 				_, err := partitionConnections[partition].WriteMessages(kafkaMessages...)
 				if err != nil {
 					zap.L().Error(err.Error())
+					for _, message := range validMessages {
+						if message.Callback == nil {
+							continue
+						}
+						message.Callback(ctx, message.Data, err)
+					}
 					return err
+				}
+
+				for _, message := range validMessages {
+					if message.Callback == nil {
+						continue
+					}
+					message.Callback(ctxMerged, message.Data, nil)
 				}
 
 				return nil
@@ -91,8 +109,7 @@ func main() {
 				zap.L().Error(err.Error())
 				return
 			}
-		}
-		bat, err := producer_batcher.NewBatcher[event.PageViewEvent](flushFn)
+		})
 		if err != nil {
 			zap.L().Fatal(err.Error())
 		}
@@ -100,8 +117,8 @@ func main() {
 		partitionBatchers[partition] = bat
 	}
 
-	part := partitioner.NewPartitioner[event.PageViewEvent](func(ctx context.Context, partition int, message event.PageViewEvent) error {
-		err := partitionBatchers[partition].Push(ctx, message)
+	part := partitioner.NewPartitioner[event.PageViewEvent](func(ctx context.Context, partition int, message event.PageViewEvent, callback publisher.Callback[event.PageViewEvent]) error {
+		err := partitionBatchers[partition].Push(ctx, message, callback)
 		if err != nil {
 			zap.L().Error(err.Error())
 			return err
@@ -115,8 +132,8 @@ func main() {
 
 	pub := publisher.NewPublisher[event.PageViewEvent](
 		ctx,
-		func(ctx context.Context, message event.PageViewEvent) error {
-			if err := part.WriteFn(ctx, message); err != nil {
+		func(ctx context.Context, message event.PageViewEvent, callback publisher.Callback[event.PageViewEvent]) error {
+			if err := part.WriteFn(ctx, message, callback); err != nil {
 				zap.L().Error(err.Error())
 				return err
 			}

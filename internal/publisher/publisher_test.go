@@ -12,7 +12,7 @@ import (
 func TestPublisher_SendSync(t *testing.T) {
 	called := false
 
-	writeFn := func(ctx context.Context, v int) error {
+	writeFn := func(ctx context.Context, v int, callback Callback[int]) error {
 		called = true
 		assert.Equal(t, 1, v)
 		return nil
@@ -26,7 +26,7 @@ func TestPublisher_SendSync(t *testing.T) {
 }
 
 func TestPublisher_SendSync_WaitsForWrite(t *testing.T) {
-	writeFn := func(ctx context.Context, v int) error {
+	writeFn := func(ctx context.Context, v int, callback Callback[int]) error {
 		time.Sleep(100 * time.Millisecond)
 		return nil
 	}
@@ -44,7 +44,7 @@ func TestPublisher_SendSync_WaitsForWrite(t *testing.T) {
 func TestPublisher_SendAsync(t *testing.T) {
 	done := make(chan struct{})
 
-	writeFn := func(ctx context.Context, v int) error {
+	writeFn := func(ctx context.Context, v int, callback Callback[int]) error {
 		return nil
 	}
 
@@ -71,7 +71,7 @@ func TestPublisher_SendAsync_DoesNotWaitForWrite(t *testing.T) {
 	writeStarted := make(chan struct{})
 	writeFinished := make(chan struct{})
 
-	writeFn := func(ctx context.Context, v int) error {
+	writeFn := func(ctx context.Context, v int, callback Callback[int]) error {
 		close(writeStarted)
 		time.Sleep(100 * time.Millisecond)
 		close(writeFinished)
@@ -97,7 +97,7 @@ func TestPublisher_SendAsync_CallbackReceivesError(t *testing.T) {
 	expectedErr := errors.New("write failed")
 	done := make(chan struct{})
 
-	writeFn := func(ctx context.Context, v int) error {
+	writeFn := func(ctx context.Context, v int, callback Callback[int]) error {
 		return expectedErr
 	}
 

@@ -35,22 +35,22 @@ func NewPartitioner[T any](writeFn WritePartitionFn[T]) *Partitioner[T] {
 
 // WriteFn выбирает партицию в соответствии с текущей конфигурацией
 // и передает сообщение в ранее переданную функцию для отправки в партицию.
-func (p *Partitioner[T]) WriteFn(ctx context.Context, message T) error {
+func (p *Partitioner[T]) WriteFn(ctx context.Context, message T, callback Callback[T]) error {
 	config := p.config.Load().(*Config[T])
 
 	switch config.mode {
 	case roundRobinMode:
 		index := config.rr.Load()
-		return p.writePartitionFn(ctx, index, message)
+		return p.writePartitionFn(ctx, index, message, callback)
 
 	case keyMode:
 		key := config.keyFn(message)
 		index := p.hashToRange(key, config.count)
-		return p.writePartitionFn(ctx, index, message)
+		return p.writePartitionFn(ctx, index, message, callback)
 
 	case randomMode:
 		index := rand.Intn(config.count)
-		return p.writePartitionFn(ctx, index, message)
+		return p.writePartitionFn(ctx, index, message, callback)
 
 	default:
 		zap.L().Error("invalid mode")

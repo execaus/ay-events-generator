@@ -11,7 +11,7 @@ import (
 // recordingWriter возвращает WritePartitionFn, который записывает
 // использованные индексы партиций для последующей проверки в тестах.
 func recordingWriter[T any](out *[]int, mu *sync.Mutex) WritePartitionFn[T] {
-	return func(ctx context.Context, partition int, message T) error {
+	return func(ctx context.Context, partition int, message T, callback Callback[T]) error {
 		mu.Lock()
 		*out = append(*out, partition)
 		mu.Unlock()
@@ -31,7 +31,7 @@ func TestPartitioner_RandomMode_Range(t *testing.T) {
 	assert.NoError(t, err)
 
 	for i := 0; i < 100; i++ {
-		err := p.WriteFn(context.Background(), i)
+		err := p.WriteFn(context.Background(), i, nil)
 		assert.NoError(t, err)
 	}
 
@@ -52,7 +52,7 @@ func TestPartitioner_KeyMode_StablePartition(t *testing.T) {
 	assert.NoError(t, err)
 
 	for i := 0; i < 10; i++ {
-		err := p.WriteFn(context.Background(), "same-key")
+		err := p.WriteFn(context.Background(), "same-key", nil)
 		assert.NoError(t, err)
 	}
 
@@ -74,7 +74,7 @@ func TestPartitioner_RoundRobinMode(t *testing.T) {
 	assert.NoError(t, err)
 
 	for i := 0; i < 6; i++ {
-		err := p.WriteFn(context.Background(), i)
+		err := p.WriteFn(context.Background(), i, nil)
 		assert.NoError(t, err)
 	}
 
@@ -83,7 +83,7 @@ func TestPartitioner_RoundRobinMode(t *testing.T) {
 }
 
 func TestPartitioner_InvalidArgs(t *testing.T) {
-	p := NewPartitioner[int](func(ctx context.Context, partition int, message int) error { return nil })
+	p := NewPartitioner[int](func(ctx context.Context, partition int, message int, callback Callback[int]) error { return nil })
 
 	assert.Error(t, p.SetRandomMode(0), "Ожидалась ошибка для count <= 0")
 	assert.Error(t, p.SetRoundRobinMode(-1), "Ожидалась ошибка для count <= 0")

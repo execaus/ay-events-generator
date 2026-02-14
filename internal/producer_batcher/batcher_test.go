@@ -20,9 +20,9 @@ func TestSizeModeFlush(t *testing.T) {
 	b.SetFlushSize(3)
 
 	// Push три элемента — должно вызвать flushFn один раз
-	_ = b.Push(context.Background(), 1)
-	_ = b.Push(context.Background(), 2)
-	_ = b.Push(context.Background(), 3)
+	_ = b.Push(context.Background(), 1, nil)
+	_ = b.Push(context.Background(), 2, nil)
+	_ = b.Push(context.Background(), 3, nil)
 
 	time.Sleep(50 * time.Millisecond) // ждем асинхронный вызов
 	if atomic.LoadInt32(&called) != 1 {
@@ -41,8 +41,8 @@ func TestTimeModeFlush(t *testing.T) {
 	b.SetFlushTime(50 * time.Millisecond)
 	b.SetMode(producer_batcher.TimeMode)
 
-	_ = b.Push(context.Background(), 1)
-	_ = b.Push(context.Background(), 2)
+	_ = b.Push(context.Background(), 1, nil)
+	_ = b.Push(context.Background(), 2, nil)
 
 	time.Sleep(120 * time.Millisecond) // ждем таймер
 	if atomic.LoadInt32(&called) == 0 {
@@ -64,8 +64,8 @@ func TestCloseFlush(t *testing.T) {
 	b.SetMode(producer_batcher.SizeMode)
 	b.SetFlushSize(5)
 
-	_ = b.Push(context.Background(), 1)
-	_ = b.Push(context.Background(), 2)
+	_ = b.Push(context.Background(), 1, nil)
+	_ = b.Push(context.Background(), 2, nil)
 
 	b.Close() // должен вызвать flushFn
 	if atomic.LoadInt32(&called) != 1 {
@@ -82,7 +82,7 @@ func TestPushAfterClose(t *testing.T) {
 
 	b, _ := producer_batcher.NewBatcher[int](flushFn)
 	b.Close()
-	_ = b.Push(context.Background(), 1)
+	_ = b.Push(context.Background(), 1, nil)
 
 	time.Sleep(50 * time.Millisecond)
 	if atomic.LoadInt32(&called) != 0 {

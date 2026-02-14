@@ -49,7 +49,7 @@ func (w *Publisher[T]) SendSync(ctx context.Context, message T) error {
 		return ErrClosed
 	}
 
-	err := w.write(ctx, message)
+	err := w.write(ctx, message, nil)
 	if err != nil {
 		zap.L().Error(err.Error())
 		return err
@@ -104,12 +104,14 @@ func (w *Publisher[T]) worker(ctx context.Context, wg *sync.WaitGroup) {
 		case <-w.closeCh:
 			return
 		case m := <-w.asyncMessagesCh:
-			err = w.write(m.Ctx, m.Message)
+			err = w.write(m.Ctx, m.Message, m.Callback)
 			if err != nil {
 				zap.L().Error(err.Error())
-			}
 
-			if m.Callback != nil {
+				if m.Callback == nil {
+					continue
+				}
+
 				m.Callback(ctx, m.Message, err)
 			}
 		}
