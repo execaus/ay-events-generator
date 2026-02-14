@@ -1,6 +1,7 @@
 package main
 
 import (
+	"ay-events-generator/internal/context_merge"
 	"ay-events-generator/internal/dispatcher"
 	"ay-events-generator/internal/event"
 	"ay-events-generator/internal/generator"
@@ -27,13 +28,6 @@ const (
 	kafkaPartitionCount = 5
 )
 
-/*
-Должен ли идти один контекст от генерации события до его отправки в брокер?
-Обработка после batch сбора, приходит массив message, партиционирование после сложное, если на основе key.
-Делать какой-то буфер для каждой отдельной партиции, то есть сначала select partition
-и только потом batch?
-*/
-
 func main() {
 	ctx := context.Background()
 
@@ -58,11 +52,19 @@ func main() {
 
 	disp := dispatcher.NewDispatcher()
 
-	var partitionBatchers []*producer_batcher.Batcher[event.PageViewEvent]
+	partitionBatchers := make([]*producer_batcher.Batcher[event.PageViewEvent], kafkaPartitionCount)
 	for partition := range kafkaPartitionCount {
 		flushFn := func(messages []producer_batcher.Message[event.PageViewEvent]) {
-			// TODO ctxMerged := context_merger.Merge()
-			if err := disp.Write(context.TODO(), func(ctx context.Context) error {
+			contexts := make([]context.Context, len(messages))
+
+			for i, message := range messages {
+				contexts[i] = message.Ctx
+			}
+
+			ctxMerged, cancel := context_merge.Merge(contexts...)
+			defer cancel()
+
+			if err := disp.Write(ctxMerged, func(ctx context.Context) error {
 				kafkaMessages := make([]kafka.Message, len(messages))
 
 				for i, message := range messages {
