@@ -57,12 +57,13 @@ var (
 
 // EventGenerator структура генератора событий
 type EventGenerator struct {
-	durationMax int           // Максимальная длительность события
-	bounceRate  float32       // Вероятность отскока
-	invalidRate float32       // Вероятность преднамеренной ошибки
-	mode        Mode          // Режим генерации
-	eventCh     chan Event    // Канал для отправки событий
-	stopCh      chan struct{} // Канал для остановки генерации
+	durationMax               int                        // Максимальная длительность события
+	bounceRate                float32                    // Вероятность отскока
+	invalidRate               float32                    // Вероятность преднамеренной ошибки
+	mode                      Mode                       // Режим генерации
+	eventCh                   chan Event                 // Канал для отправки событий
+	stopCh                    chan struct{}              // Канал для остановки генерации
+	postCreateEventsListeners []PostCreateEventsListener // Слушатели события создания событий
 }
 
 // NewEventGenerator создает новый экземпляр генератора событий с настройками по умолчанию
@@ -100,6 +101,11 @@ func (g *EventGenerator) SetMode(mode Mode) {
 // SetInvalidRate задает вероятность преднамеренной ошибки в событии
 func (g *EventGenerator) SetInvalidRate(value float32) {
 	g.invalidRate = value
+}
+
+// AddPostCreateEventsListener добавляет слушателя, который будет вызван после создания определенного количества событий.
+func (g *EventGenerator) AddPostCreateEventsListener(fn func(count int)) {
+	g.postCreateEventsListeners = append(g.postCreateEventsListeners, fn)
 }
 
 // eventTick определяет количество событий, генерируемых за тик, в зависимости от режима
@@ -156,9 +162,13 @@ func (g *EventGenerator) Events() <-chan Event {
 				close(g.eventCh)
 				return
 			case <-ticker.C:
-				for range g.eventTick() {
+				eventCount := g.eventTick()
+
+				for range eventCount {
 					g.eventCh <- g.event()
 				}
+
+				g.callPostCreateEventsListeners(eventCount)
 			}
 		}
 	}()
@@ -251,5 +261,13 @@ func (g *EventGenerator) getValidEvent(duration int, isBounce bool) Event {
 		Meta: Meta{
 			IsInvalid: false,
 		},
+	}
+}
+
+// callPostCreateEventsListeners вызывает всех зарегистрированных слушателей событий,
+// передавая им количество созданных событий.
+func (g *EventGenerator) callPostCreateEventsListeners(count int) {
+	for _, listener := range g.postCreateEventsListeners {
+		listener(count)
 	}
 }

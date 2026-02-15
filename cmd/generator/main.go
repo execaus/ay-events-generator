@@ -5,10 +5,13 @@ import (
 	"ay-events-generator/internal/dispatcher"
 	"ay-events-generator/internal/event"
 	"ay-events-generator/internal/generator"
+	"ay-events-generator/internal/generator_metrics"
 	"ay-events-generator/internal/partitioner"
 	"ay-events-generator/internal/producer_batcher"
 	"ay-events-generator/internal/publisher"
 	"context"
+	"fmt"
+	"net/http"
 
 	"github.com/segmentio/kafka-go"
 	"go.uber.org/zap"
@@ -19,10 +22,12 @@ func init() {
 }
 
 const (
+	metricsPort = 8090
+
 	publisherWorkerCount            = 8
 	publisherBufferAsyncMessageSize = 4096
 
-	kafkaAddr  = "localhost:9093"
+	kafkaAddr  = "kafka:9092"
 	kafkaTopic = "events"
 
 	kafkaPartitionCount = 5
@@ -31,8 +36,22 @@ const (
 func main() {
 	ctx := context.Background()
 
+	metrics := generator_metrics.NewMetrics()
+
+	http.Handle("/metrics", metrics.Handler())
+
+	go func() {
+		if err := http.ListenAndServe(fmt.Sprintf(":%d", metricsPort), nil); err != nil {
+			zap.L().Fatal(err.Error())
+		}
+	}()
+
 	gen := generator.NewEventGenerator()
 	defer gen.Close()
+
+	if err := metrics.CollectEventGenerator(gen); err != nil {
+		zap.L().Fatal(err.Error())
+	}
 
 	var partitionConnections []*kafka.Conn
 	for partition := range kafkaPartitionCount {
